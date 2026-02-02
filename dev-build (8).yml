@@ -1,0 +1,127 @@
+name: Build and Deploy to Dev
+
+on:
+  # pull_request:
+  #   branches:
+  #     - release/deploy
+  #   types: 
+  #     - closed
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: arc-mulesoft
+    env:
+      MULESOFT_CONNECTED_APP_USERNAME: ${{ secrets.MULESOFT_CONNECTED_APP_USERNAME }}
+      MULESOFT_CONNECTED_APP_PASSWORD: ${{ secrets.MULESOFT_CONNECTED_APP_PASSWORD }}
+      MULESOFT_GITHUB_ACTIONS_CLIENT_ID: ${{ secrets.MULESOFT_GITHUB_ACTIONS_CLIENT_ID }}
+      MULESOFT_GITHUB_ACTIONS_CLIENT_SECRET: ${{ secrets.MULESOFT_GITHUB_ACTIONS_CLIENT_SECRET }}
+      MULESOFT_SECRET_KEY: ${{ secrets.MULESOFT_SECRET_KEY }}
+      NP_SPLUNKINDEX: ${{ secrets.NP_SPLUNKINDEX }}
+      NP_SPLUNKTOKEN: ${{ secrets.NP_SPLUNKTOKEN }}
+      NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+      NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Set up JDK 8
+        uses: actions/setup-java@v3
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build and Test
+        run: |
+          mvn clean package \
+          -DskipMunitTests \
+          -Dmule_target_env=Dev \
+          -Dsecret.key=${{ secrets.MULESOFT_SECRET_KEY }} \
+          -Dapp.splunkEnv=${{ vars.CHUB_APP_TARGET_DEV }} \
+          -Dapp.splunkIndex=${{ secrets.NP_SPLUNKINDEX }} \
+          -DsplunkToken=${{ secrets.NP_SPLUNKTOKEN }} \
+          -s .maven/settings.xml
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: artifacts
+          path: target/*.jar
+      
+  deploy-dev:
+    
+    needs: build
+    runs-on: arc-mulesoft
+    env:
+      MULESOFT_CONNECTED_APP_USERNAME: ${{ secrets.MULESOFT_CONNECTED_APP_USERNAME }}
+      MULESOFT_CONNECTED_APP_PASSWORD: ${{ secrets.MULESOFT_CONNECTED_APP_PASSWORD }}
+      MULESOFT_SECRET_KEY: ${{ secrets.MULESOFT_SECRET_KEY }}
+      NP_SPLUNKINDEX: ${{ secrets.NP_SPLUNKINDEX }}
+      NP_SPLUNKTOKEN: ${{ secrets.NP_SPLUNKTOKEN }}
+      MULESOFT_GITHUB_ACTIONS_CLIENT_ID: ${{ secrets.MULESOFT_GITHUB_ACTIONS_CLIENT_ID }}
+      MULESOFT_GITHUB_ACTIONS_CLIENT_SECRET: ${{ secrets.MULESOFT_GITHUB_ACTIONS_CLIENT_SECRET }}
+      MULESOFT_AR_USERNAME: ${{ secrets.MULESOFT_AR_USERNAME }}
+      MULESOFT_AR_PASS: ${{ secrets.MULESOFT_AR_PASS }}
+      NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+      NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Set up JDK 8
+        uses: actions/setup-java@v3
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+
+      - uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: artifacts
+
+      - name: Deploy
+        run: |
+          mvn clean deploy \
+          -DskipMunitTests \
+          -Dmule_target_env=Dev \
+          -Dapp.deployPrefix=dev- \
+          -Dsecret.key=${{ secrets.DB_KEY }} \
+          -Dmule.env=Dev \
+          -Ddbname=g12dev1 \
+          -Dapp.splunkIndex=${{ secrets.NP_SPLUNKINDEX }} \
+          -Dapp.splunkToken=${{ secrets.NP_SPLUNKTOKEN }} \
+          -Dapp.splunkEnv=${{ secrets.CHUB_APP_TARGET_DEV }} \
+          -Dapp.environment=Dev \
+          -Dhttp.internal.port=${{ secrets.HTTP_INTERNAL_PORT }} \
+          -Dartifactory.username=${{ secrets.MULESOFT_AR_USERNAME }} \
+          -Dartifactory.password=${{ secrets.MULESOFT_AR_PASS }} \
+          -Dapp.client_id=${{ secrets.MULESOFT_Dev_CLIENTID }} \
+          -Dapp.client_secret=${{ secrets.MULESOFT_Dev_CLIENTSECRET }} \
+          -Dapp.buildNumber=${{ github.run_number }} \
+          -DmuleDeploy \
+          -s .maven/settings.xml
